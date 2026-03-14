@@ -1,0 +1,450 @@
+// Loop Return - Database Schema
+// https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============ CORE ENTITIES ============
+
+model Merchant {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  shopifyDomain String?
+  shopifyAccessToken String?
+  plan      String   @default("starter") // starter | growth | enterprise
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          User[]
+  orders         Order[]
+  returns        Return[]
+  customers      Customer[]
+  products       Product[]
+  policies       ReturnPolicy[]
+  inventoryUpdates InventoryUpdate[]
+  warehouseStock WarehouseStock[]
+  fraudScores    FraudScore[]
+  fraudEvents    FraudEvent[]
+  communicationEvents CommunicationEvent[]
+  returnReasons  ReturnReason[]
+  warehouses     Warehouse[]
+  carriers       Carrier[]
+  webhookEvents  WebhookEvent[]
+}
+
+model User {
+  id         String   @id @default(cuid())
+  merchantId String
+  email      String
+  passwordHash String
+  name       String?
+  role       String   @default("member") // owner | admin | member
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+}
+
+model Customer {
+  id         String   @id @default(cuid())
+  merchantId String
+  email      String
+  name       String?
+  phone      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant     Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orders       Order[]
+  returns      Return[]
+  storeCredits StoreCredit[]
+  fraudScores  FraudScore[]
+  fraudEvents  FraudEvent[]
+  communicationEvents CommunicationEvent[]
+  qualityInspections QualityInspection[]
+}
+
+model Order {
+  id           String   @id @default(cuid())
+  merchantId   String
+  customerId   String
+  orderNumber  String
+  totalPrice   Decimal  @db.Decimal(10, 2)
+  currency     String   @default("USD")
+  status       String   @default("fulfilled")
+  shopifyOrderId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  merchant     Merchant     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orderItems   OrderItem[]
+  returns      Return[]
+}
+
+model OrderItem {
+  id         String   @id @default(cuid())
+  orderId    String
+  productId  String
+  variantId  String?
+  quantity   Int      @default(1)
+  price      Decimal  @db.Decimal(10, 2)
+  sku        String?
+  createdAt  DateTime @default(now())
+
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  returnItems ReturnItem[]
+}
+
+model Product {
+  id         String   @id @default(cuid())
+  merchantId String
+  name       String
+  sku        String?
+  price      Decimal  @db.Decimal(10, 2)
+  shopifyProductId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant     Merchant     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orderItems   OrderItem[]
+  returnItems  ReturnItem[]
+  warehouseStock WarehouseStock[]
+  inventoryUpdates InventoryUpdate[]
+}
+
+// ============ RETURNS ============
+
+model Return {
+  id          String    @id @default(cuid())
+  orderId     String
+  customerId  String
+  merchantId  String
+  rmaNumber   String    @unique
+  status      String    @default("pending") // pending | approved | received | processing | refunded | rejected | cancelled
+  returnReason String?
+  notes       String?
+  requestedAt DateTime  @default(now())
+  approvedAt  DateTime?
+  receivedAt  DateTime?
+  refundedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  order         Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  merchant      Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  returnItems   ReturnItem[]
+  shippingLabel ShippingLabel?
+  refund        Refund?
+  exchange      Exchange?
+  inventoryUpdates InventoryUpdate[]
+  fraudScores   FraudScore[]
+  fraudEvents   FraudEvent[]
+  communicationEvents CommunicationEvent[]
+  trackingEvents ReturnTracking[]
+  qualityInspections QualityInspection[]
+  returnFee ReturnFee?
+}
+
+model ReturnItem {
+  id        String   @id @default(cuid())
+  returnId  String
+  orderItemId String
+  productId String
+  variantId String?
+  quantity  Int      @default(1)
+  condition String   @default("unopened") // unopened | opened | damaged | defective
+  createdAt DateTime @default(now())
+
+  return    Return    @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+// ============ SHIPPING ============
+
+model ShippingLabel {
+  id             String   @id @default(cuid())
+  returnId       String   @unique
+  carrier        String
+  trackingNumber String?
+  labelUrl       String?
+  status         String   @default("created") // created | printed | in_transit | delivered
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  return Return @relation(fields: [returnId], references: [id], onDelete: Cascade)
+}
+
+// ============ REFUNDS & CREDITS ============
+
+model Refund {
+  id            String   @id @default(cuid())
+  returnId      String   @unique
+  amount        Decimal  @db.Decimal(10, 2)
+  paymentMethod String   // original | store_credit | other
+  status        String   @default("pending") // pending | processing | completed | failed
+  processedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  return Return @relation(fields: [returnId], references: [id], onDelete: Cascade)
+}
+
+model StoreCredit {
+  id        String    @id @default(cuid())
+  customerId String
+  amount    Decimal   @db.Decimal(10, 2)
+  balance   Decimal   @db.Decimal(10, 2)
+  expiryDate DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+// ============ EXCHANGES ============
+
+model Exchange {
+  id        String   @id @default(cuid())
+  returnId  String   @unique
+  status    String   @default("pending") // pending | processing | shipped | completed
+  newOrderId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  return Return @relation(fields: [returnId], references: [id], onDelete: Cascade)
+}
+
+// ============ POLICIES ============
+
+model ReturnPolicy {
+  id          String   @id @default(cuid())
+  merchantId  String
+  name        String
+  description String?
+  returnWindowDays Int @default(30)
+  conditions  Json?    // JSON: allowed conditions, exclusions, etc.
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+}
+
+// ============ INVENTORY (Phase 3) ============
+
+model WarehouseStock {
+  id         String   @id @default(cuid())
+  merchantId String
+  productId  String
+  sku        String
+  quantity   Int      @default(0)
+  location   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, productId, sku, location])
+  @@index([merchantId, sku])
+  @@map("warehouse_stock")
+}
+
+model InventoryUpdate {
+  id          String   @id @default(cuid())
+  merchantId  String
+  productId   String
+  sku         String?
+  quantity    Int
+  type        String   // restock | damage | liquidate
+  reason      String?
+  returnId    String?
+  createdAt   DateTime @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  return   Return?  @relation(fields: [returnId], references: [id], onDelete: SetNull)
+
+  @@index([merchantId, createdAt])
+  @@index([returnId])
+  @@map("inventory_updates")
+}
+
+// ============ FRAUD (Phase 4) ============
+
+model FraudScore {
+  id         String   @id @default(cuid())
+  merchantId String
+  returnId   String?
+  customerId String?
+  score      Decimal  @db.Decimal(5, 4) // 0-1
+  riskLevel  String   @default("low") // low | medium | high
+  factors    Json?    // scoring factors
+  createdAt  DateTime @default(now())
+
+  merchant Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  return   Return?   @relation(fields: [returnId], references: [id], onDelete: SetNull)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([merchantId, createdAt])
+  @@index([returnId])
+  @@map("fraud_scores")
+}
+
+model FraudEvent {
+  id         String   @id @default(cuid())
+  merchantId String
+  returnId   String?
+  customerId String?
+  eventType  String
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  merchant Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  return   Return?   @relation(fields: [returnId], references: [id], onDelete: SetNull)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([merchantId, eventType, createdAt])
+  @@index([returnId])
+  @@map("fraud_events")
+}
+
+// ============ COMMUNICATION ============
+
+model CommunicationEvent {
+  id          String   @id @default(cuid())
+  merchantId  String
+  returnId    String?
+  customerId  String
+  channel     String   // email | sms
+  eventType   String   // return_approved | label_created | refund_processed
+  recipient   String
+  provider    String   // mcp_resend | mcp_twilio | mock
+  providerRef String?
+  status      String   @default("queued") // queued | sent | failed
+  payload     Json?
+  error       String?
+  createdAt   DateTime @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  return   Return?  @relation(fields: [returnId], references: [id], onDelete: SetNull)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, createdAt])
+  @@index([returnId, eventType])
+}
+
+// ============ EXTRA ENTITIES (Requirement Coverage) ============
+
+model ReturnReason {
+  id          String   @id @default(cuid())
+  merchantId  String
+  code        String
+  label       String
+  category    String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, code])
+}
+
+model ReturnTracking {
+  id         String   @id @default(cuid())
+  returnId   String
+  status     String
+  location   String?
+  details    Json?
+  eventAt    DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  return Return @relation(fields: [returnId], references: [id], onDelete: Cascade)
+
+  @@index([returnId, eventAt])
+}
+
+model QualityInspection {
+  id              String   @id @default(cuid())
+  returnId        String
+  customerId      String
+  inspectedBy     String?
+  conditionScore  Int?
+  notes           String?
+  checklist       Json?
+  inspectedAt     DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  return   Return   @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([returnId, inspectedAt])
+}
+
+model ReturnFee {
+  id         String   @id @default(cuid())
+  returnId   String   @unique
+  amount     Decimal  @db.Decimal(10, 2)
+  currency   String   @default("USD")
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  return Return @relation(fields: [returnId], references: [id], onDelete: Cascade)
+}
+
+model Warehouse {
+  id         String   @id @default(cuid())
+  merchantId String
+  code       String
+  name       String
+  address    String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, code])
+}
+
+model Carrier {
+  id         String   @id @default(cuid())
+  merchantId String
+  code       String
+  name       String
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, code])
+}
+
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  merchantId  String?
+  source      String
+  eventType   String
+  payload     Json
+  processed   Boolean  @default(false)
+  error       String?
+  createdAt   DateTime @default(now())
+
+  merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+
+  @@index([source, eventType, createdAt])
+}
