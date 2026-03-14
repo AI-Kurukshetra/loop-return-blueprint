@@ -27,6 +27,14 @@ Returns management platform for Shopify brands. Process returns, exchanges, refu
 
 ## Getting Started
 
+### Node.js Version
+
+This project is pinned to Node.js 24.x.
+
+```bash
+nvm use
+```
+
 ### 1. Database
 
 Copy `.env.example` to `.env` and set your env values:
